@@ -148,13 +148,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
-            cd ~/prototipe-sore
-
-            # Buat direktori jika belum ada
-            mkdir -p prototipe_assistant/backend
-            mkdir -p prototipe_assistant/discord_bot
-            mkdir -p prototipe_assistant/backend/app/uploads
-            mkdir -p prototipe_assistant/postgres_data
+            cd ~/www/apps/prototipe-sore
 
             # Generate .env backend
             cat > prototipe_assistant/backend/.env << 'ENVEOF'
