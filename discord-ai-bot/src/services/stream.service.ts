@@ -20,7 +20,8 @@ export class StreamService {
     content: string,
     messageToEdit: Message
   ): Promise<void> {
-    const url = `${this.getBaseUrl()}/chats/${sessionId}/messages/stream?content=${encodeURIComponent(content)}`;
+        const url = `${this.getBaseUrl()}/chats/${sessionId}/messages/stream?content=${encodeURIComponent(content)}`;
+    let activeMessage = messageToEdit;
 
     try {
       const response = await fetch(url);
@@ -36,8 +37,8 @@ export class StreamService {
       const decoder = new TextDecoder('utf-8');
       
       let buffer = '';
-      let thinkingBuffer = '';
-      let contentBuffer = '';
+      const contentParts: string[] = [''];
+      let currentPartIndex = 0;
       let isDone = false;
       
       // Throttle configuration
@@ -73,15 +74,21 @@ export class StreamService {
 
         // Build status/thinking message representation
         let text = '';
-        if (thinkingBuffer) {
-          // Format thinking section beautifully inside quotes or italics
-          text += `*Thinking...*\n> ${thinkingBuffer.trim().replace(/\n/g, '\n> ')}\n\n`;
-        }
-        
-        if (contentBuffer) {
-          text += contentBuffer;
-        } else if (!isDone) {
-          text += '🤖 *Generating response...*';
+        if (currentPartIndex === 0) {
+          if (contentParts[0]) {
+            text += contentParts[0];
+          } else if (isDone) {
+            text += '🤖 *No response content received.*';
+          } else {
+            // Keep the initial "Thinking..." message, don't edit yet
+            return;
+          }
+        } else {
+          if (contentParts[currentPartIndex]) {
+            text += contentParts[currentPartIndex];
+          } else if (!isDone) {
+            text += '🤖 *Generating response...*';
+          }
         }
 
         // Clip text if it exceeds Discord's 2000 character limit
@@ -91,7 +98,7 @@ export class StreamService {
 
         if (text && text !== lastEditedText) {
           try {
-            await messageToEdit.edit({ content: text });
+            await activeMessage.edit({ content: text });
             lastEditedText = text;
           } catch (discordError: any) {
             console.error('Failed to edit Discord message chunk:', discordError.message);
@@ -103,14 +110,50 @@ export class StreamService {
       const handleSseMessage = async (msg: SseMessage) => {
         switch (msg.event) {
           case 'thinking':
-            if (msg.data && msg.data.chunk) {
-              thinkingBuffer += msg.data.chunk;
-              await triggerMessageUpdate();
-            }
+            // Ignore thinking process completely to prevent cluttering the interface and wasting character limits
             break;
           case 'content':
             if (msg.data && msg.data.chunk) {
-              contentBuffer += msg.data.chunk;
+              let currentPartText = contentParts[currentPartIndex] + msg.data.chunk;
+
+              // Auto-chunking threshold at 1900 chars (giving buffer for formatting / embeds)
+              if (currentPartText.length > 1900) {
+                const allowedLength = 1900;
+                let splitIdx = allowedLength;
+
+                // Search window to find a space or newline in the last 100 chars
+                const searchWindow = currentPartText.substring(allowedLength - 100, allowedLength);
+                const lastSpace = Math.max(searchWindow.lastIndexOf(' '), searchWindow.lastIndexOf('\n'));
+                if (lastSpace !== -1) {
+                  splitIdx = (allowedLength - 100) + lastSpace;
+                }
+
+                const keep = currentPartText.substring(0, splitIdx);
+                const overflow = currentPartText.substring(splitIdx);
+
+                contentParts[currentPartIndex] = keep;
+                // Flush current message with finalized content
+                await triggerMessageUpdate(true);
+
+                currentPartIndex++;
+                contentParts[currentPartIndex] = overflow;
+
+                // Send a new follow-up message to continue streaming the response
+                try {
+                  if (activeMessage.channel && 'send' in activeMessage.channel) {
+                    activeMessage = await (activeMessage.channel as any).send({
+                      content: '🤖 *Generating response...*'
+                    });
+                    lastEditedText = '🤖 *Generating response...*';
+                  } else {
+                    throw new Error('Channel is not sendable (missing send method)');
+                  }
+                } catch (discordError: any) {
+                  console.error('Failed to send follow-up message:', discordError.message);
+                }
+              } else {
+                contentParts[currentPartIndex] = currentPartText;
+              }
               await triggerMessageUpdate();
             }
             break;
@@ -130,28 +173,44 @@ export class StreamService {
       
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          buffer += decoder.decode(); // Flush any remaining bytes
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
         
-        // Save the incomplete last line back to the buffer
-        buffer = lines.pop() || '';
+        // SSE messages are separated by double newlines (\n\n or \r\n\r\n)
+        const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
+        const blocks = normalizedBuffer.split('\n\n');
+        
+        // Save the incomplete last block back to the buffer
+        buffer = blocks.pop() || '';
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
+        for (const block of blocks) {
+          const lines = block.split('\n');
+          let eventName = currentEvent;
+          let dataBuffer = '';
 
-          if (trimmed.startsWith('event:')) {
-            currentEvent = trimmed.substring(6).trim();
-          } else if (trimmed.startsWith('data:')) {
-            const dataStr = trimmed.substring(5).trim();
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            if (trimmed.startsWith('event:')) {
+              eventName = trimmed.substring(6).trim();
+            } else if (trimmed.startsWith('data:')) {
+              dataBuffer += (dataBuffer ? '\n' : '') + trimmed.substring(5).trim();
+            }
+          }
+
+          if (dataBuffer) {
+            currentEvent = eventName;
             try {
-              const dataObj = JSON.parse(dataStr);
-              await handleSseMessage({ event: currentEvent, data: dataObj });
+              const dataObj = JSON.parse(dataBuffer);
+              await handleSseMessage({ event: eventName, data: dataObj });
             } catch (err) {
-              // If it's not JSON, pass the raw string
-              await handleSseMessage({ event: currentEvent, data: dataStr });
+              // If it's not JSON, pass the raw string/buffer
+              await handleSseMessage({ event: eventName, data: dataBuffer });
             }
           }
         }
@@ -159,14 +218,31 @@ export class StreamService {
 
       // Handle any remaining content left in buffer
       if (buffer.trim()) {
-        const trimmed = buffer.trim();
-        if (trimmed.startsWith('data:')) {
-          const dataStr = trimmed.substring(5).trim();
-          try {
-            const dataObj = JSON.parse(dataStr);
-            await handleSseMessage({ event: currentEvent, data: dataObj });
-          } catch {
-            await handleSseMessage({ event: currentEvent, data: dataStr });
+        const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
+        const blocks = normalizedBuffer.split('\n\n');
+        for (const block of blocks) {
+          const lines = block.split('\n');
+          let eventName = currentEvent;
+          let dataBuffer = '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            if (trimmed.startsWith('event:')) {
+              eventName = trimmed.substring(6).trim();
+            } else if (trimmed.startsWith('data:')) {
+              dataBuffer += (dataBuffer ? '\n' : '') + trimmed.substring(5).trim();
+            }
+          }
+
+          if (dataBuffer) {
+            try {
+              const dataObj = JSON.parse(dataBuffer);
+              await handleSseMessage({ event: eventName, data: dataObj });
+            } catch {
+              await handleSseMessage({ event: eventName, data: dataBuffer });
+            }
           }
         }
       }
@@ -178,7 +254,7 @@ export class StreamService {
     } catch (error: any) {
       console.error('SSE Stream subscription error:', error);
       try {
-        await messageToEdit.edit({
+        await activeMessage.edit({
           content: `❌ **Error while streaming response:** ${error.message || 'An unexpected error occurred.'}`
         });
       } catch (discordError) {
