@@ -114,7 +114,16 @@ export async function exportToPDF(title: string, author: string, text: string): 
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    executablePath: process.env.NODE_ENV === 'production' ? '/usr/bin/chromium' : undefined,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process'
+    ]
   });
   try {
     const page = await browser.newPage();
