@@ -37,7 +37,7 @@ services:
     environment:
       DISCORD_TOKEN: "${DISCORD_TOKEN}"
       DISCORD_CLIENT_ID: "${DISCORD_CLIENT_ID}"
-      BACKEND_API_URL: "http://backend:5100/api"
+      API_BASE_URL: "http://backend:5100/api"
     depends_on:
       backend:
         condition: service_healthy
