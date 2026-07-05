@@ -154,7 +154,7 @@ jobs:
             set -e
 
             echo "=== Go to project ==="
-            cd ~/www/apps
+            cd ~/apps/prototipe-assistant
 
             echo "Current Directory:"
             pwd
@@ -166,17 +166,13 @@ jobs:
             docker compose version
 
             echo "=== Pull Latest Images ==="
-            docker compose pull ca-backend ca-discord
+            docker compose pull backend discord-bot
 
             echo "=== Deploy Containers ==="
             docker compose up -d \
-              ca-psql-pgvector \
-              ca-backend \
-              ca-discord \
+              backend \
+              discord-bot \
               --remove-orphans
-
-            echo "=== Restart Nginx ==="
-            docker compose restart nginx
 
             echo "=== Cleanup Images ==="
             docker image prune -f
@@ -185,8 +181,14 @@ jobs:
             docker compose ps
 
             echo "=== Wait Health Check ==="
-            sleep 10
+            sleep 15
 
             docker compose ps --format "table {{.Name}}\t{{.Status}}"
+
+            echo "=== Run Database Seeding ==="
+            docker compose exec -T backend node dist/prisma/seed.js
+
+            echo "=== Upload Mock Documents (RAG) ==="
+            docker compose exec -T backend node dist/prisma/uploadMockDocs.js
 
             echo "✅ Deploy Success"

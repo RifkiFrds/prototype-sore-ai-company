@@ -2,68 +2,30 @@ version: "3.9"
 
 services:
   # =============================================
-  # PostgreSQL + pgvector
-  # =============================================
-  postgres:
-    image: pgvector/pgvector:pg17
-    container_name: prototipe_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: prototipe_sore
-    ports:
-      - "5434:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d prototipe_sore"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # =============================================
-  # Redis (untuk BullMQ queue)
-  # =============================================
-  redis:
-    image: redis:7-alpine
-    container_name: prototipe_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # =============================================
   # Backend (NestJS API + SSE)
   # =============================================
   backend:
     image: godinov/prototipe-company-assistant-backend:latest
     container_name: prototipe_backend
     restart: unless-stopped
-    ports:
-      - "5100:5100"
+    expose:
+      - "5100"
     environment:
       PORT: 5100
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/prototipe_sore?schema=public"
+      DATABASE_URL: "${DATABASE_URL}"
       SUMOPOD_API_KEY: "${SUMOPOD_API_KEY}"
       SUMOPOD_BASE_URL: "${SUMOPOD_BASE_URL:-https://ai.sumopod.com}"
       SUMOPOD_MODEL: "${SUMOPOD_MODEL:-deepseek-v4-flash}"
       VECTOR_DB_PROVIDER: "postgresql"
-      REDIS_HOST: redis
+      REDIS_HOST: "redis"
       REDIS_PORT: 6379
     volumes:
       - backend_uploads:/app/uploads
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5100/api/agent/employees || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   # =============================================
   # Discord AI Bot
@@ -81,9 +43,10 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
   backend_uploads:
     driver: local
+
+networks:
+  default:
+    name: proxy
+    external: true
