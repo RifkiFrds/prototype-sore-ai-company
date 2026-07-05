@@ -3,10 +3,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 async function bootstrap() {
-  const isProd = !fs.existsSync(path.join(__dirname, '../src/app.module.ts'));
-  const AppModulePath = isProd ? '../dist/app.module.js' : '../src/app.module';
-  const RagServicePath = isProd ? '../dist/modules/rag/rag.service.js' : '../src/modules/rag/rag.service';
-  const PrismaServicePath = isProd ? '../dist/core/database/prisma.service.js' : '../src/core/database/prisma.service';
+  // Cek apakah script ini dijalankan dari folder 'dist'
+  const isRunningFromDist = __dirname.includes(path.join('dist', 'prisma')) || __dirname.endsWith(path.join('dist', 'prisma'));
+
+  const AppModulePath = isRunningFromDist ? '../app.module.js' : '../dist/app.module.js';
+  const RagServicePath = isRunningFromDist ? '../modules/rag/rag.service.js' : '../dist/modules/rag/rag.service.js';
+  const PrismaServicePath = isRunningFromDist ? '../core/database/prisma.service.js' : '../dist/core/database/prisma.service.js';
 
   const { AppModule } = await import(AppModulePath);
   const { RagService } = await import(RagServicePath);

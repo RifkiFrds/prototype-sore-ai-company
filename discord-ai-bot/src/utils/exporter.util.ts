@@ -122,7 +122,7 @@ export async function exportToPDF(title: string, author: string, text: string): 
       '--disable-gpu',
       '--no-first-run',
       '--no-zygote',
-      '--single-process'
+      '--disable-extensions'
     ]
   });
   try {

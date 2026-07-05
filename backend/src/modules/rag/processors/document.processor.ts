@@ -6,6 +6,11 @@ import { AiEngineService } from '../../ai-engine/ai-engine.service';
 import { VectorDbService } from '../../../core/vector-db/vector-db.service';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as _pdf from 'pdf-parse';
+import * as mammoth from 'mammoth';
+
+// Fix ESM/CJS interoperability for pdf-parse under NodeNext
+const pdf = (_pdf as any).default || _pdf;
 
 @Processor('document-processing')
 @Injectable()
@@ -35,23 +40,33 @@ export class DocumentProcessor extends WorkerHost {
       if (!fs.existsSync(filePath)) {
         throw new Error(`Document file not found at path: ${filePath}`);
       }
-      const fileContent = fs.readFileSync(filePath, 'utf-8');
 
       // Smart Chunking based on file extension
       let chunks: string[] = [];
       const ext = path.extname(filePath).toLowerCase();
 
-      if (ext === '.json') {
-        try {
-          const parsed = JSON.parse(fileContent);
-          chunks = this.chunkJson(parsed);
-        } catch (e) {
+      if (ext === '.pdf') {
+        const fileBuffer = fs.readFileSync(filePath);
+        const pdfData = await pdf(fileBuffer);
+        chunks = this.chunkText(pdfData.text, 1000, 200);
+      } else if (ext === '.docx') {
+        const fileBuffer = fs.readFileSync(filePath);
+        const docxData = await mammoth.extractRawText({ buffer: fileBuffer });
+        chunks = this.chunkText(docxData.value, 1000, 200);
+      } else {
+        const fileContent = fs.readFileSync(filePath, 'utf-8');
+        if (ext === '.json') {
+          try {
+            const parsed = JSON.parse(fileContent);
+            chunks = this.chunkJson(parsed);
+          } catch (e) {
+            chunks = this.chunkText(fileContent, 1000, 200);
+          }
+        } else if (ext === '.csv') {
+          chunks = this.chunkCsv(fileContent);
+        } else {
           chunks = this.chunkText(fileContent, 1000, 200);
         }
-      } else if (ext === '.csv') {
-        chunks = this.chunkCsv(fileContent);
-      } else {
-        chunks = this.chunkText(fileContent, 1000, 200);
       }
 
       this.logger.log(`Document split into ${chunks.length} chunks.`);
