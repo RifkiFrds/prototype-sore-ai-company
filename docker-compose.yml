@@ -38,6 +38,7 @@ services:
       DISCORD_TOKEN: "${DISCORD_TOKEN}"
       DISCORD_CLIENT_ID: "${DISCORD_CLIENT_ID}"
       API_BASE_URL: "http://backend:5100/api"
+      DISCORD_GUILD_ID: "${DISCORD_GUILD_ID}"
     depends_on:
       backend:
         condition: service_healthy
